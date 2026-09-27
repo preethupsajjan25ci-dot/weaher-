@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyCast — Rain & Temperature Predictor</title>
+<style>
+  :root{
+    --bg1:#0f172a; --bg2:#1e293b; --card:#1e293bcc; --accent:#38bdf8;
+    --text:#e2e8f0; --muted:#94a3b8; --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'Segoe UI',system-ui,sans-serif; color:var(--text);
+    background:linear-gradient(160deg,var(--bg1),var(--bg2));
+    min-height:100vh; padding:20px;
+  }
+  .wrap{max-width:820px;margin:0 auto;}
+  h1{font-size:1.6rem;display:flex;align-items:center;gap:8px;}
+  .sub{color:var(--muted);margin-bottom:20px;font-size:.9rem;}
+  .searchRow{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+  input[type=text]{
+    flex:1;min-width:200px;padding:12px 14px;border-radius:10px;border:1px solid #334155;
+    background:#0f172a;color:var(--text);font-size:1rem;
+  }
+  button{
+    padding:12px 16px;border:none;border-radius:10px;background:var(--accent);
+    color:#0f172a;font-weight:600;cursor:pointer;font-size:.95rem;
+  }
+  button.secondary{background:#334155;color:var(--text);}
+  #suggestions{background:#0f172a;border-radius:10px;overflow:hidden;margin-bottom:16px;border:1px solid #334155;display:none;}
+  #suggestions div{padding:10px 14px;cursor:pointer;border-bottom:1px solid #1e293b;}
+  #suggestions div:hover{background:#1e293b;}
+  .card{
+    background:var(--card);backdrop-filter:blur(6px);border-radius:16px;padding:20px;
+    margin-bottom:16px;border:1px solid #33415580;
+  }
+  .locName{font-size:1.3rem;font-weight:600;}
+  .locSub{color:var(--muted);font-size:.85rem;margin-bottom:14px;}
+  .mainTemp{font-size:3.2rem;font-weight:700;display:flex;align-items:baseline;gap:10px;}
+  .mainTemp span{font-size:1.1rem;color:var(--muted);font-weight:400;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:16px;}
+  .stat{background:#0f172a80;border-radius:10px;padding:10px 12px;}
+  .stat .label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .stat .val{font-size:1.15rem;font-weight:600;margin-top:2px;}
+  .feel{padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:600;display:inline-block;margin-top:6px;}
+  .feel.hot{background:#7c2d1244;color:var(--bad);}
+  .feel.cold{background:#1e3a8a44;color:#93c5fd;}
+  .feel.mild{background:#065f4644;color:var(--good);}
+  .feel.humid{background:#78350f44;color:var(--warn);margin-left:6px;}
+  h3{font-size:1rem;margin-bottom:10px;color:var(--accent);}
+  .hourRow{display:flex;overflow-x:auto;gap:10px;padding-bottom:6px;}
+  .hour{min-width:66px;text-align:center;background:#0f172a80;border-radius:10px;padding:8px 4px;flex:0 0 auto;}
+  .hour .t{font-size:.72rem;color:var(--muted);}
+  .hour .p{font-size:.95rem;font-weight:700;color:var(--accent);margin:4px 0;}
+  .hour .r{font-size:.7rem;color:var(--muted);}
+  .dayRow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #33415550;}
+  .dayRow:last-child{border-bottom:none;}
+  .windBox{display:flex;align-items:center;gap:16px;}
+  .compass{width:70px;height:70px;border-radius:50%;border:2px solid #334155;position:relative;flex:0 0 auto;}
+  .needle{position:absolute;top:50%;left:50%;width:2px;height:28px;background:var(--accent);
+    transform-origin:top center;margin-left:-1px;}
+  .needle::after{content:'';position:absolute;top:-6px;left:-4px;border:5px solid transparent;border-bottom-color:var(--accent);}
+  #status{color:var(--muted);font-size:.9rem;margin-bottom:10px;}
+  .err{color:var(--bad);}
+  a.credit{color:var(--muted);font-size:.75rem;display:block;text-align:center;margin-top:20px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌦️ SkyCast</h1>
+  <div class="sub">Temperature, humidity & rain forecasts — for cities and villages alike.</div>
+
+  <div class="searchRow">
+    <input type="text" id="cityInput" placeholder="Search any city or village...">
+    <button onclick="search()">Search</button>
+    <button class="secondary" onclick="useMyLocation()">📍 My location</button>
+  </div>
+  <div id="suggestions"></div>
+  <div id="status"></div>
+
+  <div id="results"></div>
+
+  <a class="credit" href="https://open-meteo.com/" target="_blank">Weather data: Open-Meteo.com</a>
+</div>
+
+<script>
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const suggEl = document.getElementById('suggestions');
+
+document.getElementById('cityInput').addEventListener('keydown', e=>{ if(e.key==='Enter') search(); });
+
+function setStatus(msg, isErr){ statusEl.innerHTML = msg ? `<span class="${isErr?'err':''}">${msg}</span>` : ''; }
+
+async function search(){
+  const q = document.getElementById('cityInput').value.trim();
+  if(!q){ return; }
+  setStatus('Searching...');
+  suggEl.style.display='none';
+  try{
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=8&language=en&format=json`);
+    const data = await r.json();
+    if(!data.results || !data.results.length){ setStatus('No place found. Try a different spelling.', true); return; }
+    if(data.results.length===1){ loadWeather(data.results[0]); setStatus(''); return; }
+    suggEl.innerHTML = data.results.map((p,i)=>{
+      const region = [p.admin1, p.country].filter(Boolean).join(', ');
+      return `<div onclick='pick(${i})'>${p.name} <span style="color:var(--muted)">— ${region}</span></div>`;
+    }).join('');
+    window._suggestions = data.results;
+    suggEl.style.display='block';
+    setStatus('');
+  }catch(e){ setStatus('Search failed. Check your internet connection.', true); }
+}
+function pick(i){ suggEl.style.display='none'; loadWeather(window._suggestions[i]); }
+
+function useMyLocation(){
+  if(!navigator.geolocation){ setStatus('Geolocation not supported by this browser.', true); return; }
+  setStatus('Getting your location...');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const {latitude, longitude} = pos.coords;
+    let name = 'Your location';
+    try{
+      const rr = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+      const rd = await rr.json();
+      name = rd.city || rd.locality || rd.principalSubdivision || 'Your location';
+      var region = [rd.principalSubdivision, rd.countryName].filter(Boolean).join(', ');
+    }catch(e){}
+    loadWeather({name, admin1:region||'', country:'', latitude, longitude});
+    setStatus('');
+  }, err=>{
+    setStatus('Could not get your location (permission denied or unavailable).', true);
+  });
+}
+
+function degToCompass(d){
+  const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(d/22.5)%16];
+}
+function feelClass(t){ return t>=32?'hot':(t<=10?'cold':'mild'); }
+function feelLabel(t){ return t>=38?'Very Hot':t>=32?'Hot':t>=22?'Warm':t>=14?'Mild':t>=5?'Cool':t>=0?'Cold':'Very Cold'; }
+function humidLabel(h){ return h>=80?'Very Humid':h>=60?'Humid':h>=35?'Comfortable':'Dry'; }
+function weatherDesc(code){
+  const m={0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Fog',
+  51:'Light drizzle',53:'Drizzle',55:'Dense drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',
+  71:'Light snow',73:'Snow',75:'Heavy snow',80:'Rain showers',81:'Rain showers',82:'Violent showers',
+  95:'Thunderstorm',96:'Thunderstorm w/ hail',99:'Severe thunderstorm'};
+  return m[code]||'—';
+}
+
+async function loadWeather(place){
+  setStatus('Loading forecast...');
+  resultsEl.innerHTML='';
+  try{
+    const {latitude, longitude} = place;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}`+
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m`+
+      `&hourly=temperature_2m,precipitation_probability,precipitation,relative_humidity_2m`+
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max`+
+      `&timezone=auto&forecast_days=5`;
+    const r = await fetch(url);
+    const d = await r.json();
+    render(place, d);
+    setStatus('');
+  }catch(e){ setStatus('Could not load weather data. Please try again.', true); }
+}
+
+function render(place, d){
+  const c = d.current;
+  const region = [place.admin1, place.country].filter(Boolean).join(', ');
+  const fClass = feelClass(c.apparent_temperature);
+  const compassDeg = c.wind_direction_10m;
+  const fromDir = degToCompass(compassDeg);
+
+  // Next 12 hours starting from current hour
+  const nowIdx = d.hourly.time.findIndex(t => new Date(t) >= new Date(d.current.time)) || 0;
+  let hourHtml='';
+  for(let i=nowIdx;i<nowIdx+12 && i<d.hourly.time.length;i++){
+    const hr = new Date(d.hourly.time[i]).getHours();
+    const label = hr===0?'12am':hr===12?'12pm':(hr>12?hr-12+'pm':hr+'am');
+    hourHtml += `<div class="hour">
+      <div class="t">${label}</div>
+      <div class="p">${Math.round(d.hourly.precipitation_probability[i])}%</div>
+      <div class="r">${d.hourly.precipitation[i].toFixed(1)}mm</div>
+    </div>`;
+  }
+
+  let dayHtml='';
+  for(let i=0;i<d.daily.time.length;i++){
+    const day = new Date(d.daily.time[i]).toLocaleDateString(undefined,{weekday:'short'});
+    dayHtml += `<div class="dayRow">
+      <div>${day}</div>
+      <div style="color:var(--muted);font-size:.85rem">${weatherDesc(d.daily.weather_code[i])}</div>
+      <div>💧 ${Math.round(d.daily.precipitation_probability_max[i])}%</div>
+      <div>${Math.round(d.daily.temperature_2m_max[i])}° / ${Math.round(d.daily.temperature_2m_min[i])}°</div>
+    </div>`;
+  }
+
+  // Simple "rain coming from" summary using wind direction + next-hours probability
+  const upcoming = d.hourly.precipitation_probability.slice(nowIdx, nowIdx+6);
+  const maxUpcoming = Math.max(...upcoming);
+  let rainMsg;
+  if(maxUpcoming < 20){
+    rainMsg = `Low chance of rain in the next 6 hours (peak ${maxUpcoming}%).`;
+  } else {
+    const hIdx = upcoming.indexOf(maxUpcoming) + nowIdx;
+    const whenHr = new Date(d.hourly.time[hIdx]).getHours();
+    const whenLabel = whenHr===0?'12am':whenHr===12?'12pm':(whenHr>12?whenHr-12+'pm':whenHr+'am');
+    rainMsg = `Rain is likely moving in from the <b>${fromDir}</b>, with the highest chance (${maxUpcoming}%) around <b>${whenLabel}</b>, roughly ${d.hourly.precipitation[hIdx].toFixed(1)}mm expected that hour.`;
+  }
+
+  resultsEl.innerHTML = `
+  <div class="card">
+    <div class="locName">${place.name}</div>
+    <div class="locSub">${region || 'Location'} · ${weatherDesc(c.weather_code)}</div>
+    <div class="mainTemp">${Math.round(c.temperature_2m)}°C <span>feels like ${Math.round(c.apparent_temperature)}°C</span></div>
+    <div>
+      <span class="feel ${fClass}">${feelLabel(c.apparent_temperature)}</span>
+      <span class="feel humid">${humidLabel(c.relative_humidity_2m)} (${c.relative_humidity_2m}% humidity)</span>
+    </div>
+    <div class="grid">
+      <div class="stat"><div class="label">Humidity</div><div class="val">${c.relative_humidity_2m}%</div></div>
+      <div class="stat"><div class="label">Wind</div><div class="val">${c.wind_speed_10m} km/h</div></div>
+      <div class="stat"><div class="label">Current rain</div><div class="val">${c.precipitation} mm</div></div>
+      <div class="stat"><div class="label">Wind from</div><div class="val">${fromDir}</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Where the rain is coming from</h3>
+    <div class="windBox">
+      <div class="compass"><div class="needle" style="transform:rotate(${compassDeg}deg)"></div></div>
+      <div>${rainMsg}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Next 12 hours — rain chance & amount</h3>
+    <div class="hourRow">${hourHtml}</div>
+  </div>
+
+  <div class="card">
+    <h3>5-day outlook</h3>
+    ${dayHtml}
+  </div>
+  `;
+}
+</script>
+</body>
+</html>
